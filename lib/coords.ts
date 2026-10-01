@@ -118,6 +118,39 @@ export function distanceM(a: Point, b: Point, map: MapDefinition): number {
 }
 
 /**
+ * Length in metres of each consecutive leg of a route: [A–B, B–C, …].
+ * The one place route distances are derived — never store these.
+ */
+export function routeSegmentsM(points: Point[], map: MapDefinition): number[] {
+  return points.slice(1).map((point, i) => distanceM(points[i], point, map));
+}
+
+/** Distance along the route, not the straight line between its ends. */
+export function routeTotalM(points: Point[], map: MapDefinition): number {
+  return routeSegmentsM(points, map).reduce((sum, metres) => sum + metres, 0);
+}
+
+/** Route point name from its zero-based index: 0 is "A". */
+export function routeLabel(index: number): string {
+  return String.fromCharCode(65 + index);
+}
+
+/**
+ * The only distance formatter. Whole metres with thousands separators at
+ * every magnitude — ranges are called out in metres, never kilometres.
+ */
+export function formatDistance(metres: number): string {
+  if (!Number.isFinite(metres)) return '—';
+  // Fixed locale so the separator does not vary with the browser's.
+  return `${Math.round(metres).toLocaleString('en-US')} m`;
+}
+
+/** Grid cell name from zero-based indices: column 0, row 0 is "A1". */
+export function gridLabel(col: number, row: number): string {
+  return String.fromCharCode(65 + col) + (row + 1);
+}
+
+/**
  * Inverse of the stage scale. Multiply any dimension that should stay
  * constant on screen — stroke widths, marker radii, font sizes — by this.
  */

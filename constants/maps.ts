@@ -17,8 +17,7 @@ export const MAPS: Record<string, MapDefinition> = {
     displayName: 'Erangel',
     imageUrl: '/maps/bgmi/Erangel.png',
     imagePx: { width: 4096, height: 4096 },
-    // UNVERIFIED. Every reported distance is this number times a normalized
-    // delta. Confirm against the in-game map before measure mode ships.
+    // Every reported distance is this number times a normalized delta.
     worldSizeM: 8000,
     gridDivisions: 8,
   },
