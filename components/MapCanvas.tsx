@@ -25,6 +25,24 @@ const PINCH_SENSITIVITY = 0.01;
  */
 const CLICK_TRAVEL_PX = 4;
 
+/** Minimum finger movement to register a meaningful zoom step. */
+const PINCH_EPSILON_PX = 1;
+
+/**
+ * Finger state captured at touch start, used to persist across touchmove
+ * events without re-rendering. Touch event handlers use refs instead of
+ * state to avoid unnecessary re-renders during the gesture.
+ */
+interface PinchState {
+  id1: number;
+  id2: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  initialDist: number;
+}
+
 /** A press this close to a measure point grabs it instead of the map. */
 const POINT_GRAB_PX = 12;
 
@@ -62,6 +80,9 @@ export function MapCanvas() {
   const [dragging, setDragging] = useState(false);
   /** Cursor in map space. Per-frame and local to this view, so not in the store. */
   const [hover, setHover] = useState<Point | null>(null);
+
+  /** Active two-finger pinch state, if any. */
+  const pinch = useRef<PinchState | null>(null);
 
   const mapPointAt = useCallback(
     (clientX: number, clientY: number): Point | null => {
@@ -142,6 +163,9 @@ export function MapCanvas() {
     (event: React.PointerEvent<HTMLDivElement>) => {
       // Secondary buttons are reserved for context actions in later steps.
       if (event.button !== 0) return;
+      // A pinch gesture is more important than a pan; the two fingers are
+      // deliberately spreading or closing, so don't compete with it.
+      if (pinch.current) return;
       press.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -215,6 +239,108 @@ export function MapCanvas() {
     [measureMode, mapPointAt, addMeasurePoint],
   );
 
+  /** Cancel any in-progress single-finger drag when a pinch starts. */
+  const handleTouchStart = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      if (event.touches.length !== 2) return;
+
+      // Cancel any ongoing single-finger press/drag so it does not compete
+      // with the pinch gesture.
+      if (press.current) {
+        event.currentTarget.releasePointerCapture(press.current.pointerId);
+        press.current = null;
+        setDragging(false);
+      }
+
+      event.preventDefault();
+
+      const t0 = event.touches[0];
+      const t1 = event.touches[1];
+      const newDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+
+      pinch.current = {
+        id1: t0.identifier,
+        id2: t1.identifier,
+        x1: t0.clientX,
+        y1: t0.clientY,
+        x2: t1.clientX,
+        y2: t1.clientY,
+        initialDist: newDist,
+      };
+    },
+    [setDragging],
+  );
+
+  /** Smooth pinch-to-zoom while two fingers are on the map. */
+  const handleTouchMove = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      const state = pinch.current;
+      if (!state) return;
+      if (event.touches.length !== 2) {
+        pinch.current = null;
+        return;
+      }
+
+      // Confirm both original fingers are still the active touches,
+      // sorted into a stable order so distance/midpoint math is consistent.
+      const touches = Array.from(event.touches);
+      const matches = touches.filter(
+        (t) => t.identifier === state.id1 || t.identifier === state.id2,
+      );
+      if (matches.length !== 2) {
+        pinch.current = null;
+        return;
+      }
+      const [p0, p1] = matches.sort((a, b) => a.identifier - b.identifier);
+
+      // Only apply zoom when at least one finger has moved meaningfully,
+      // to avoid jitter from sub-pixel drift.
+      const move0 = Math.hypot(p0.clientX - state.x1, p0.clientY - state.y1);
+      const move1 = Math.hypot(p1.clientX - state.x2, p1.clientY - state.y2);
+      if (move0 < PINCH_EPSILON_PX && move1 < PINCH_EPSILON_PX) return;
+
+      const newDist = Math.hypot(p1.clientX - p0.clientX, p1.clientY - p0.clientY);
+
+      const bounds = containerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+
+      // Center the zoom on the midpoint between the fingers so the area
+      // under the gesture stays fixed instead of drifting.
+      zoom(
+        {
+          x: (p0.clientX + p1.clientX) / 2 - bounds.left,
+          y: (p0.clientY + p1.clientY) / 2 - bounds.top,
+        },
+        newDist / state.initialDist,
+      );
+
+      // Roll the state forward so the next frame applies a smooth
+      // incremental factor instead of compounding from the gesture's start.
+      state.initialDist = newDist;
+      state.x1 = p0.clientX;
+      state.y1 = p0.clientY;
+      state.x2 = p1.clientX;
+      state.y2 = p1.clientY;
+
+      event.preventDefault();
+    },
+    [containerRef, zoom],
+  );
+
+  /** End the pinch gesture when either finger lifts. */
+  const handleTouchEnd = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      const state = pinch.current;
+      if (!state) return;
+      // Clear the gesture only when one of the two pinch fingers leaves.
+      const lifted = Array.from(event.changedTouches).some((t) =>
+        t.identifier === state.id1 || t.identifier === state.id2,
+      );
+      if (lifted) pinch.current = null;
+    },
+    [],
+  );
+
   const cursor = dragging
     ? 'grabbing'
     : measureMode && !measureDone
@@ -236,6 +362,10 @@ export function MapCanvas() {
         onPointerUp={endPress}
         onPointerCancel={endPress}
         onPointerLeave={() => setHover(null)}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
         style={{ cursor }}
       >
         {container && (
