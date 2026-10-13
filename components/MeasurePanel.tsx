@@ -8,6 +8,7 @@ import {
   routeTotalM,
 } from '../lib/coords';
 import { MAX_MEASURE_POINTS, useCanvasStore } from '../store/canvasStore';
+import { ENTER_FROM_TOP } from './styles';
 
 function hint(count: number, done: boolean): string {
   if (count >= MAX_MEASURE_POINTS) {
@@ -55,7 +56,7 @@ export function MeasurePanel() {
   const segments = routeSegmentsM(points, map);
 
   return (
-    <div className="absolute left-4 top-4 w-52 rounded-lg border border-white/10 bg-neutral-900/85 p-3 text-xs text-neutral-200 shadow-lg backdrop-blur">
+    <div className={`absolute left-1/2 top-4 w-52 max-md:top-16 -translate-x-1/2 rounded-lg border border-white/10 bg-neutral-900/85 max-md:bg-neutral-900/40 p-3 text-xs text-neutral-200 shadow-lg backdrop-blur ${ENTER_FROM_TOP}`}>
       {segments.length > 0 && (
         <dl className="mb-2 space-y-1 tabular-nums">
           {segments.map((metres, i) => (

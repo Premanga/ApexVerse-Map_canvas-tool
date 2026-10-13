@@ -1,4 +1,4 @@
-import type { MapDefinition, Point, Size, Viewport } from '../types';
+import type { MapDefinition, Point, Size, StrategyView, Viewport } from '../types';
 
 /**
  * Viewport math.
@@ -7,22 +7,12 @@ import type { MapDefinition, Point, Size, Viewport } from '../types';
  *   screen = map * scale + offset
  *
  * Scale is uniform on both axes, which assumes a square map. Every BGMI
- * battle-royale map is square. `assertSquare` below fails loudly if that
- * ever stops being true, rather than silently distorting geometry.
+ * battle-royale map is square.
  */
 
 /** Zoomed all the way in, one normalized unit spans the raster's full width. */
 function maxScale(map: MapDefinition): number {
   return map.imagePx.width;
-}
-
-export function assertSquare(map: MapDefinition): void {
-  if (map.imagePx.width !== map.imagePx.height) {
-    throw new Error(
-      `Map "${map.key}" is not square. Normalized coordinates and uniform ` +
-        `stage scale both assume a square raster — see map-canvas/types.ts.`,
-    );
-  }
 }
 
 /** Smallest scale that still fits the whole map in the container. */
@@ -38,6 +28,37 @@ export function fitViewport(container: Size): Viewport {
     x: (container.width - scale) / 2,
     y: (container.height - scale) / 2,
   };
+}
+
+/** The view a viewport shows in this container, in screen-free terms. */
+export function viewOf(viewport: Viewport, container: Size): StrategyView {
+  return {
+    x: (container.width / 2 - viewport.x) / viewport.scale,
+    y: (container.height / 2 - viewport.y) / viewport.scale,
+    zoom: viewport.scale / fitScale(container),
+  };
+}
+
+/**
+ * The viewport that shows `view` in this container: the same map point in
+ * the middle, at the same multiple of the fitting zoom. On a container of a
+ * different shape that is the nearest thing to "the same view" there is.
+ */
+export function viewportOf(
+  view: StrategyView,
+  container: Size,
+  map: MapDefinition,
+): Viewport {
+  const fit = fitScale(container);
+  const scale = Math.min(maxScale(map), Math.max(fit, view.zoom * fit));
+  return clampViewport(
+    {
+      scale,
+      x: container.width / 2 - view.x * scale,
+      y: container.height / 2 - view.y * scale,
+    },
+    container,
+  );
 }
 
 export function screenToMap(viewport: Viewport, screen: Point): Point {
@@ -62,16 +83,24 @@ export function clampPoint(p: Point): Point {
 }
 
 /**
- * Keeps the map sensibly placed: centred on an axis where it is smaller than
- * the container, edge-locked where it is larger. Prevents panning the map
- * off into empty space, which is disorienting and has no use.
+ * Keeps the map sensibly placed. Fully zoomed out it is centred. Zoomed in,
+ * the only rule is that the middle of the view stays over the map, so it
+ * can never be panned away entirely.
+ *
+ * Deliberately looser than "centre it when narrower than the view, pin it to
+ * the edges when wider": that rule moved the map out from under the cursor
+ * or pinch midpoint on nearly every zoom step. This one never fights a
+ * zoom-in about a point on the map — scaling an interval up about a point
+ * inside it only grows it, so if it covered the view's middle before, it
+ * still does — and it lets an edge of the map be brought to mid-screen.
  */
 export function clampViewport(viewport: Viewport, container: Size): Viewport {
   const { scale } = viewport;
+  const fitted = scale <= fitScale(container);
 
   const axis = (offset: number, extent: number): number => {
-    if (scale <= extent) return (extent - scale) / 2;
-    return Math.min(0, Math.max(extent - scale, offset));
+    if (fitted) return (extent - scale) / 2;
+    return Math.min(extent / 2, Math.max(extent / 2 - scale, offset));
   };
 
   return {
